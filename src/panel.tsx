@@ -19,6 +19,8 @@ import {
   type PanelContext,
 } from "orca";
 import type { EnvironmentSummary, WorkspaceSnapshot } from "./protocol";
+import { composer, openComposer } from "./panel/composer";
+import { newRequestForm } from "./panel/new-request";
 import { requestEditor } from "./panel/request-editor";
 import { responseView } from "./panel/response-view";
 import {
@@ -112,6 +114,23 @@ function folderNotice(snapshot: WorkspaceSnapshot) {
   );
 }
 
+/** Keys of the collection and folders that hold `key`, outermost first; null if it isn't there. */
+function ancestorsOf(items: WorkspaceSnapshot["tree"], key: string): string[] | null {
+  for (const item of items) {
+    if (item.key === key) return [];
+    const inner = item.children ? ancestorsOf(item.children, key) : null;
+    if (inner) return [item.key, ...inner];
+  }
+  return null;
+}
+
+/** Collections start open, and so does every folder around the chosen request. */
+function expandedKeys(snapshot: WorkspaceSnapshot): string[] {
+  const chosen = read(selectedKey);
+  const around = chosen ? (ancestorsOf(snapshot.tree, chosen) ?? []) : [];
+  return [...new Set([...snapshot.tree.map((collection) => collection.key), ...around])];
+}
+
 function workspaceView(snapshot: WorkspaceSnapshot) {
   const request = read(selectedRequest);
   const environment = snapshot.environments.find((e) => e.id === read(environmentId));
@@ -119,13 +138,15 @@ function workspaceView(snapshot: WorkspaceSnapshot) {
   if (snapshot.tree.length === 0) return notice;
   return (
     <Stack gap="md">
+      {read(composer).open ? newRequestForm(snapshot) : null}
+      {read(composer).open ? <Separator /> : null}
       {snapshot.environments.length > 0 ? environmentPicker(snapshot) : null}
       {environment ? secretInputs(environment) : null}
       {notice}
       <Tree
         label="Saved requests"
         items={snapshot.tree}
-        defaultExpanded={snapshot.tree.map((collection) => collection.key)}
+        defaultExpanded={expandedKeys(snapshot)}
         selected={read(selectedKey) ?? undefined}
         maxHeight="md"
         onSelect={({ key }) => {
@@ -147,20 +168,36 @@ function workspaceView(snapshot: WorkspaceSnapshot) {
   );
 }
 
+function newRequestButton(snapshot: WorkspaceSnapshot) {
+  if (snapshot.collections.length === 0 || read(composer).open) return null;
+  return (
+    <IconButton
+      icon="add"
+      label="New request from cURL"
+      variant="ghost"
+      size="sm"
+      onPress={() => openComposer(snapshot)}
+    />
+  );
+}
+
 export default function Panel() {
   const state = read(workspace);
   return (
     <Stack gap="md">
       <Row justify="between" align="center">
         <Heading level={2}>Narada</Heading>
-        <IconButton
-          icon="refresh"
-          label="Reload collections"
-          variant="ghost"
-          size="sm"
-          disabled={state.kind === "loading"}
-          onPress={() => void loadWorkspace()}
-        />
+        <Row gap="xs" align="center">
+          {state.kind === "ready" ? newRequestButton(state.snapshot) : null}
+          <IconButton
+            icon="refresh"
+            label="Reload collections"
+            variant="ghost"
+            size="sm"
+            disabled={state.kind === "loading"}
+            onPress={() => void loadWorkspace()}
+          />
+        </Row>
       </Row>
       {state.kind === "loading" ? <Skeleton lines={4} label="Loading collections" /> : null}
       {state.kind === "failed" ? (
